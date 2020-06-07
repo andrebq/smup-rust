@@ -1,4 +1,4 @@
-.PHONY: test update build doc run
+.PHONY: test update build doc run fmt
 
 update:
 	rustup update
@@ -14,3 +14,6 @@ doc:
 
 run:
 	cargo run
+
+fmt:
+	cargo fmt
