@@ -1,10 +1,14 @@
+extern crate graphics;
+extern crate piston;
 extern crate piston_window;
 extern crate specs;
-extern crate piston;
+
+mod render;
 
 use piston_window::*;
+use render::Sprite;
 use specs::prelude::*;
-use specs::{Component};
+use specs::Component;
 
 #[derive(Default, Component, Debug)]
 #[storage(NullStorage)]
@@ -45,8 +49,12 @@ impl<'a> System<'a> for PhysicsSystem {
 }
 
 struct MouseTrackSystem {}
-impl <'a> System<'a> for MouseTrackSystem {
-    type SystemData = (WriteStorage<'a, Position>, ReadStorage<'a, MouseTracker>, Read<'a, GameState>);
+impl<'a> System<'a> for MouseTrackSystem {
+    type SystemData = (
+        WriteStorage<'a, Position>,
+        ReadStorage<'a, MouseTracker>,
+        Read<'a, GameState>,
+    );
     fn run(&mut self, (mut pos_store, _track, gs): Self::SystemData) {
         for pos in (&mut pos_store).join() {
             (*pos).x = gs.mouse_position.x;
@@ -56,42 +64,66 @@ impl <'a> System<'a> for MouseTrackSystem {
 }
 
 struct RenderSystem {
-    win : PistonWindow,
+    win: PistonWindow,
 }
 
 fn handle_mouse_cursor(position: [f64; 2], gs: &mut GameState) {
-    gs.mouse_position = Position{
+    gs.mouse_position = Position {
         x: position[0] as f32,
         y: position[1] as f32,
     }
 }
 
 impl<'a> System<'a> for RenderSystem {
-    type SystemData = (ReadStorage<'a, Position>, Write<'a, GameState>);
+    type SystemData = (
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, Sprite>,
+        Write<'a, GameState>,
+    );
 
-    fn run(&mut self, (positions, mut gs): Self::SystemData) {
+    fn run(&mut self, (positions, sprites, mut gs): Self::SystemData) {
         match self.win.next() {
             Some(event) => {
                 match event.mouse_cursor_args() {
-                    Some(cursor) => { handle_mouse_cursor(cursor, &mut gs) }
-                    None => ()
+                    Some(cursor) => handle_mouse_cursor(cursor, &mut gs),
+                    None => (),
                 }
                 self.win.draw_2d(&event, |context, graphics, _device| {
                     clear([1.; 4], graphics);
-                    for pos in positions.join() {
-                        let (w, h) = (100.0, 100.0);
+                    for (pos, sprite) in (&positions, &sprites).join() {
+                        let (w, h) = (sprite.size.w, sprite.size.h);
+                        println!(
+                            "rendering {:?} with {:?} at {:?}",
+                            (w, h),
+                            sprite.color.to_array(),
+                            pos
+                        );
                         rectangle(
-                            [0.0, 0.0, 0.0, 1.0], // red
-                            [(pos.x - w/2.0) as f64, (pos.y - h/2.0) as f64, w as f64, h as f64],
+                            sprite.color.to_array(),
+                            [
+                                (pos.x - sprite.pivot.x) as f64,
+                                (pos.y - sprite.pivot.y) as f64,
+                                w as f64,
+                                h as f64,
+                            ],
                             context.transform,
                             graphics,
                         );
+                        // rectangle(
+                        //     sprite.color.to_array(),
+                        //     [
+                        //         (pos.x - w / 2.0) as f64,
+                        //         (pos.y - h / 2.0) as f64,
+                        //         w as f64,
+                        //         h as f64,
+                        //     ],
+                        //     context.transform,
+                        //     graphics,
+                        // );
                     }
                 });
             }
-            None => {
-                gs.exit = true
-            }
+            None => gs.exit = true,
         }
     }
 }
@@ -101,22 +133,33 @@ fn create_world() -> World {
     world.register::<Position>();
     world.register::<Velocity>();
     world.register::<MouseTracker>();
+    world.register::<Sprite>();
     world
 }
 
 fn main() {
+    use render::{Color, Pivot, Size};
     let mut world = create_world();
     world
         .create_entity()
         .with(Position { x: 0.0, y: 0.0 })
-        .with(MouseTracker{})
+        .with(MouseTracker {})
+        .with(Sprite {
+            color: Color {
+                r: 1.,
+                g: 1.,
+                ..Default::default()
+            },
+            size: Size { w: 50., h: 50. },
+            pivot: Pivot { x: 25., y: 25. },
+        })
         .build();
-    
-        world.insert(GameState{
-            exit: false,
-            delta: std::time::Duration::new(0, 0),
-            mouse_position: Position{x: 0.0, y: 0.0},
-        });
+
+    world.insert(GameState {
+        exit: false,
+        delta: std::time::Duration::new(0, 0),
+        mouse_position: Position { x: 0.0, y: 0.0 },
+    });
 
     let window: PistonWindow = WindowSettings::new("Hello Piston!", [640, 480])
         .exit_on_esc(true)
@@ -135,7 +178,7 @@ fn main() {
         let gs = world.fetch::<GameState>();
         if gs.exit {
             println!("exit");
-            break
+            break;
         }
     }
 }
