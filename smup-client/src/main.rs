@@ -9,6 +9,7 @@ use piston_window::*;
 use render::Sprite;
 use specs::prelude::*;
 use specs::Component;
+use std::sync::{Arc, Mutex};
 
 #[derive(Default, Component, Debug)]
 #[storage(NullStorage)]
@@ -31,8 +32,9 @@ struct Velocity {
 #[derive(Debug, Default)]
 struct GameState {
     exit: bool,
-    delta: std::time::Duration,
+    delta: f64,
     mouse_position: Position,
+    last_event: Option<Event>,
 }
 
 struct PhysicsSystem {}
@@ -64,7 +66,11 @@ impl<'a> System<'a> for MouseTrackSystem {
 }
 
 struct RenderSystem {
-    win: PistonWindow,
+    win: Arc<Mutex<PistonWindow>>,
+}
+
+struct InputSystem {
+    win: Arc<Mutex<PistonWindow>>,
 }
 
 fn handle_mouse_cursor(position: [f64; 2], gs: &mut GameState) {
@@ -74,30 +80,45 @@ fn handle_mouse_cursor(position: [f64; 2], gs: &mut GameState) {
     }
 }
 
+impl<'a> System<'a> for InputSystem {
+    type SystemData = Write<'a, GameState>;
+    fn run(&mut self, mut gs: Self::SystemData) {
+        let mut win = self.win.lock().unwrap();
+        match win.next() {
+            Some(event) => {
+                match &event {
+                    Event::Loop(Loop::Update(args)) => gs.delta = args.dt,
+                    Event::Input(_input, _opts) => match event.mouse_cursor_args() {
+                        Some(cursor) => handle_mouse_cursor(cursor, &mut gs),
+                        None => (),
+                    },
+                    _discard => {}
+                }
+                gs.last_event = Some(event)
+            }
+            None => gs.exit = true,
+        }
+    }
+}
+
 impl<'a> System<'a> for RenderSystem {
     type SystemData = (
         ReadStorage<'a, Position>,
         ReadStorage<'a, Sprite>,
-        Write<'a, GameState>,
+        Read<'a, GameState>,
     );
 
-    fn run(&mut self, (positions, sprites, mut gs): Self::SystemData) {
-        match self.win.next() {
+    fn run(&mut self, (positions, sprites, gs): Self::SystemData) {
+        match &gs.last_event {
+            None => {}
             Some(event) => {
-                match event.mouse_cursor_args() {
-                    Some(cursor) => handle_mouse_cursor(cursor, &mut gs),
-                    None => (),
-                }
-                self.win.draw_2d(&event, |context, graphics, _device| {
+                let mut win = self.win.lock().unwrap();
+
+                win.draw_2d(event, |context, graphics, _device| {
                     clear([1.; 4], graphics);
                     for (pos, sprite) in (&positions, &sprites).join() {
                         let (w, h) = (sprite.size.w, sprite.size.h);
-                        println!(
-                            "rendering {:?} with {:?} at {:?}",
-                            (w, h),
-                            sprite.color.to_array(),
-                            pos
-                        );
+                        println!("dt: {:?}", gs.delta);
                         rectangle(
                             sprite.color.to_array(),
                             [
@@ -109,21 +130,9 @@ impl<'a> System<'a> for RenderSystem {
                             context.transform,
                             graphics,
                         );
-                        // rectangle(
-                        //     sprite.color.to_array(),
-                        //     [
-                        //         (pos.x - w / 2.0) as f64,
-                        //         (pos.y - h / 2.0) as f64,
-                        //         w as f64,
-                        //         h as f64,
-                        //     ],
-                        //     context.transform,
-                        //     graphics,
-                        // );
                     }
                 });
             }
-            None => gs.exit = true,
         }
     }
 }
@@ -156,9 +165,8 @@ fn main() {
         .build();
 
     world.insert(GameState {
-        exit: false,
-        delta: std::time::Duration::new(0, 0),
-        mouse_position: Position { x: 0.0, y: 0.0 },
+        delta: 0.,
+        ..Default::default()
     });
 
     let window: PistonWindow = WindowSettings::new("Hello Piston!", [640, 480])
@@ -166,10 +174,12 @@ fn main() {
         .build()
         .unwrap();
 
+    let win = Arc::new(Mutex::new(window));
     let mut dispatcher = DispatcherBuilder::new()
         .with(PhysicsSystem {}, "physics", &[])
         .with(MouseTrackSystem {}, "mouse_tracker", &[])
-        .with_thread_local(RenderSystem { win: window })
+        .with_thread_local(InputSystem { win: win.clone() })
+        .with_thread_local(RenderSystem { win: win.clone() })
         .build();
 
     loop {
