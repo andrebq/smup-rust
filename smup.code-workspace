@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "smup-client"
+		},
+		{
+			"path": "nphysics_testbed"
 		}
 	],
 	"settings": {}

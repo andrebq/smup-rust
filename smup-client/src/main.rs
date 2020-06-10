@@ -3,8 +3,13 @@ extern crate piston;
 extern crate piston_window;
 extern crate specs;
 
+mod types;
+mod phy;
 mod render;
 
+use types::{GameState, Position};
+
+use phy::PhysicsSystem;
 use piston_window::*;
 use render::Sprite;
 use specs::prelude::*;
@@ -15,11 +20,9 @@ use std::sync::{Arc, Mutex};
 #[storage(NullStorage)]
 struct MouseTracker {}
 
-#[derive(Default, Component, Debug)]
-#[storage(VecStorage)]
-struct Position {
-    x: f32,
-    y: f32,
+#[derive(Default)]
+struct WindowEvent {
+    event: Option<Event>,
 }
 
 #[derive(Component, Debug)]
@@ -27,27 +30,6 @@ struct Position {
 struct Velocity {
     x: f32,
     y: f32,
-}
-
-#[derive(Debug, Default)]
-struct GameState {
-    exit: bool,
-    delta: f64,
-    mouse_position: Position,
-    last_event: Option<Event>,
-}
-
-struct PhysicsSystem {}
-
-impl<'a> System<'a> for PhysicsSystem {
-    type SystemData = (WriteStorage<'a, Position>, ReadStorage<'a, Velocity>);
-
-    fn run(&mut self, (mut pos_store, vel_store): Self::SystemData) {
-        for (pos, vel) in (&mut pos_store, &vel_store).join() {
-            (*pos).x += vel.x;
-            (*pos).y += vel.y;
-        }
-    }
 }
 
 struct MouseTrackSystem {}
@@ -81,8 +63,8 @@ fn handle_mouse_cursor(position: [f64; 2], gs: &mut GameState) {
 }
 
 impl<'a> System<'a> for InputSystem {
-    type SystemData = Write<'a, GameState>;
-    fn run(&mut self, mut gs: Self::SystemData) {
+    type SystemData = (Write<'a, GameState>, Write<'a, WindowEvent>);
+    fn run(&mut self, (mut gs, mut we): Self::SystemData) {
         let mut win = self.win.lock().unwrap();
         match win.next() {
             Some(event) => {
@@ -94,7 +76,7 @@ impl<'a> System<'a> for InputSystem {
                     },
                     _discard => {}
                 }
-                gs.last_event = Some(event)
+                we.event = Some(event)
             }
             None => gs.exit = true,
         }
@@ -105,11 +87,11 @@ impl<'a> System<'a> for RenderSystem {
     type SystemData = (
         ReadStorage<'a, Position>,
         ReadStorage<'a, Sprite>,
-        Read<'a, GameState>,
+        Read<'a, WindowEvent>,
     );
 
-    fn run(&mut self, (positions, sprites, gs): Self::SystemData) {
-        match &gs.last_event {
+    fn run(&mut self, (positions, sprites, we): Self::SystemData) {
+        match &we.event {
             None => {}
             Some(event) => {
                 let mut win = self.win.lock().unwrap();
@@ -118,7 +100,6 @@ impl<'a> System<'a> for RenderSystem {
                     clear([1.; 4], graphics);
                     for (pos, sprite) in (&positions, &sprites).join() {
                         let (w, h) = (sprite.size.w, sprite.size.h);
-                        println!("dt: {:?}", gs.delta);
                         rectangle(
                             sprite.color.to_array(),
                             [
@@ -168,16 +149,26 @@ fn main() {
         delta: 0.,
         ..Default::default()
     });
+    world.insert(WindowEvent::default());
 
-    let window: PistonWindow = WindowSettings::new("Hello Piston!", [640, 480])
+    let mut window: PistonWindow = WindowSettings::new("Hello Piston!", [640, 480])
         .exit_on_esc(true)
         .build()
         .unwrap();
+    window.set_event_settings(EventSettings{
+        ups: 30,
+        lazy: true,
+        ..Default::default()
+    });
+    let window = window;
+
+    let mut physics = PhysicsSystem::new();
+    physics.add_box(phy::Vec2::new(10., 10.));
 
     let win = Arc::new(Mutex::new(window));
     let mut dispatcher = DispatcherBuilder::new()
-        .with(PhysicsSystem {}, "physics", &[])
         .with(MouseTrackSystem {}, "mouse_tracker", &[])
+        //.with(physics, "physics", &[])
         .with_thread_local(InputSystem { win: win.clone() })
         .with_thread_local(RenderSystem { win: win.clone() })
         .build();
